@@ -100,6 +100,8 @@ Sample search request:
   - `app/db/create_tables.py`: Main table definitions.
   - `app/db/db_initialise.py`: Initializes users table for authentication/demo.
   - Enum modification (example): `scripts/alter_occasion_enum_add_beach.py`.
+  - Run `scripts/reset_schema_with_enums.py` for full schema reset from varchar to enums for better results
+  - Run all alter_table scripts in scripts folder for better updates.
 
 See `tests/test_tables_created_successfully.py` for verification logic.
 
