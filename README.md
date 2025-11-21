@@ -38,104 +38,139 @@ This repository provides a semantic search engine for fashion products. It lever
 
 ---
 
-## Architecture
+# Fashion Semantic Search
 
-- **FastAPI** server (`app/main.py`) exposes endpoints for both LLM and vector semantic search.
-- **APIRouter** (`app/api/v1/search_routes.py`) mounts endpoints:
-  - `/search_sql`: SQL-only filter search
-  - `/search`: Vector + SQL hybrid semantic search
-- **Search service** (`app/services/search_service.py`): Handles request validation, OpenAI embedding, database lookup, and OpenSearch integration.
-- **Database Layer** (`app/db/`): Contains scripts and configs for MySQL database.
-- **OpenSearch client** (`scripts/opensearch_client2.py`): Connects and manages product vector indexes.
+LLM-powered semantic search for fashion products with SQL filter generation and vector-based ranking. Converts natural-language queries into structured SQL filters that support advanced operations like IN/NOT IN (for vibes, occasions, categories, etc.), and ranks results using vector similarity. Also includes a fashionable taxonomy, caching for speed, and now features a Streamlit web app interface for seamless prototyping.
 
 ---
 
-## Installation
+## 🚀 Project Setup
 
-1. **Clone the repo**:
-   ```sh
-   git clone https://github.com/kannan-prodapt/fashion_semantic_search.git
-   cd fashion_semantic_search
-   ```
-2. **Configure Python environment**:
-   - Python 3.8+
-   - Install dependencies (example):
-     ```sh
-     pip install -r requirements.txt
-     ```
-3. **Set environment variables**:
-   - `OPENAI_API_KEY`
-   - `SEARCH_API_KEY`
-   - Configure MySQL credentials in `app/db/db_config.py`
+### 1. Clone the Repository
 
-4. **Start the FastAPI server**:
-   ```sh
-   uvicorn app.main:app --reload
-   ```
+```bash
+git clone https://github.com/kannan-prodapt/fashion_semantic_search.git
+cd fashion_semantic_search
+```
 
----
+### 2. Create & Activate Python Environment
 
-## API Usage
+It's recommended to use Python 3.9+.
 
-**Endpoints**:
+```bash
+python3 -m venv venv
+source venv/bin/activate
+```
 
-- `POST /v1/search_sql`: Find products via LLM-generated SQL filters (send `SearchRequest` JSON).
-- `POST /v1/search`: Hybrid semantic search using both vector and SQL filtering.
-- `GET /health`: Health check endpoint.
+### 3. Install Dependencies
 
-Sample search request:
-```json
-{
-  "query": "blue jacket for winter parties under $150"
-}
+```bash
+pip install -r requirements.txt
+```
+
+### 4. (Optional) Set Up OpenSearch/Elasticsearch for Vector Index
+
+- Ensure your OpenSearch/Elasticsearch instance is running (see provided docker/docs as needed).
+- Load the provided SQL database dump for a ready-to-use product catalog.
+
+```bash
+# Example using sqlite3
+sqlite3 fashion_catalog.db < fashion_dump.sql
+```
+
+### 5. Run the Streamlit App
+
+```bash
+streamlit run amazon_ui.py
 ```
 
 ---
 
-## Database Schema
+## 📝 API Endpoints
 
-- Core table: `products` (ID, main_category, title, price, store, etc.)
-- Aux tables: `product_images`, `product_videos`, `product_vibes`, `product_occasions`, etc.
-- Example creation scripts:
-  - `app/db/create_tables.py`: Main table definitions.
-  - `app/db/db_initialise.py`: Initializes users table for authentication/demo.
-  - Enum modification (example): `scripts/alter_occasion_enum_add_beach.py`.
-  - Run `scripts/reset_schema_with_enums.py` for full schema reset from varchar to enums for better results
-  - Run all alter_table scripts in scripts folder for better updates.
+### Two Interactive Endpoints
 
-See `tests/test_tables_created_successfully.py` for verification logic.
+- **`/v1/search`**  
+  Performs a *hybrid search*: the system applies SQL-based filtering for hard constraints (including negations, structured, and categorical facets), and then reranks the filtered results using vector similarity for semantic matching.  
+  *Recommended for most production uses as it provides both accuracy and semantic relevance.*
 
-Alternatively, You can load the sql dump provided under the data folder.
----
+- **`/v1/search_sql`**  
+  Performs *SQL-only retrieval*: returns matching results directly after SQL filtering, skipping the (costlier) vector reranking stage.  
+  *This endpoint is much faster but may not provide nuanced ranking. It's ideal for speed-critical scenarios or analytic exploration.*
 
-## Indexing & OpenSearch
-
-- Product and query embedding using OpenAI.
-- Vector indexing managed by:
-  - `scripts/create_products_index.py`: Creates/updates OpenSearch index with KNN support.
-  - `scripts/opensearch_client2.py`: Connects to AWS OpenSearch for diagnostics and management.
+Try both endpoints interactively to see the trade-offs between speed and ranking accuracy.
 
 ---
 
-## Scripts
+## 📝 Sample Usage
 
-Useful scripts for administration and migration:
+### 1. Test Query Via Streamlit
 
-- `scripts/create_products_index.py`: Set up or reset product vector indices.
-- `scripts/alter_occasion_enum_add_beach.py`: Update or add enums for category/occasion logic.
-- `scripts/reset_schema_with_enums.py`: Full schema reset with up-to-date enums.
+Open the running Streamlit app in your browser (usually at http://localhost:8501) and enter a sample query:
+
+```
+"Show me summer dresses NOT in black, perfect for beach vibes, under $50"
+```
+
+#### Resulting Steps:
+- The system parses your query, generating SQL filters (e.g. category=`dress`, color!=`black`, occasion=`beach`, price<50).
+- It retrieves matching records from the fashion catalog using SQL.
+- The shortlist is reranked using vector search (semantic similarity) against product/item embeddings (for `/v1/search`), or returned directly if using `/v1/search_sql`.
+- Recommendations are displayed with matching scores.
+
+### 2. Sample API Query
+
+```python
+import requests
+
+response = requests.post(
+    "http://localhost:8000/v1/search",  # or "/v1/search_sql"
+    json={"query": "Trendy party tops not in red, suitable for winter evenings, below $100"}
+)
+print(response.json())
+```
 
 ---
 
-## Testing
+## ⚙️ Key Design Decisions & Trade-offs
 
-- Includes basic DB and schema validation tests in `tests/`.
-- Recommended: Extend with integration and API endpoint tests.
+### Hybrid SQL + Vector Search
+
+- **SQL Filtering First:**  
+  All logical negations (e.g., NOT black, NOT party) and structured constraints (category, price, rating) are translated into SQL for *exact* filtering.  
+  **Advantage:** Ensures accurate support for negations and categorical filters, which pure vector search often mishandles.
+
+- **Vector-based Re-ranking:**  
+  After SQL extracts the candidate set, a vector similarity model ranks candidates based on semantic match to the query.  
+  **Advantage:** Allows nuanced, context-aware ranking of results within the filtered set.
+
+- **Consistency:**  
+  This layered approach produces more reliable results, especially in edge-cases where pure vector search may “miss” critical exclusions or inclusions.
+
+- **Endpoint Choices:**  
+  `/v1/search_sql` offers the fastest runtime, suitable for applications that need an instant response or just structured retrieval, while `/v1/search` (hybrid) offers higher quality ranking at some computational cost.
+
+### Streamlit for Interactive Prototyping
+
+- Fast, intuitive interface for demo and prototyping
+- Easy visualization of query parsing and final recommendations
+
+### Caching & Configurable Taxonomy
+
+- Caching increases performance for repeated or similar queries.
+- Fashion taxonomy is easily configurable for new categories, occasions, and style attributes.
 
 ---
 
-## License
+## 🧰 Notes
 
-BSD 3-Clause License.
+- `sql_dump.sql` included for jump-starting your local database.
+- Use the provided embedding/query script to load item vectors into OpenSearch before doing vector search.
 
-See [LICENSE](https://github.com/kannan-prodapt/fashion_semantic_search/blob/main/LICENSE) for details.
+---
+
+## 📄 License
+
+See [LICENSE](LICENSE) for details.
+
+---
