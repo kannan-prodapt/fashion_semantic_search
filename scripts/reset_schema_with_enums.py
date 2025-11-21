@@ -203,6 +203,37 @@ STYLE_ENUM = (
     # Sustainability
     "organic",
     "recycled",
+
+     # Colors
+    "black",
+    "white",
+    "grey",
+    "gray",
+    "blue",
+    "navy",
+    "light blue",
+    "dark blue",
+    "red",
+    "maroon",
+    "pink",
+    "hot pink",
+    "purple",
+    "lavender",
+    "yellow",
+    "mustard",
+    "green",
+    "olive",
+    "teal",
+    "turquoise",
+    "orange",
+    "brown",
+    "beige",
+    "cream",
+    "off white",
+    "gold",
+    "silver",
+    "metallic",
+    "multicolor",
 )
 
 

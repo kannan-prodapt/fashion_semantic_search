@@ -1,23 +1,30 @@
-import os
+import os, re
 import time
 import mysql.connector
 from mysql.connector import Error
+
 import openai
+from openai.error import InvalidRequestError
+
 from opensearchpy.helpers import bulk
 
-# ⚠️ Adjust this import depending on where your db_config lives.
-# If this fails, change to: from db.db_config import ...
 from app.db.db_config import DB_HOST, DB_PORT, DB_USER, DB_PASSWORD, DB_NAME
-
 from scripts.opensearch_client2 import get_opensearch_client
 
-OPENAI_EMBED_MODEL = "text-embedding-ada-002"
+# -----------------------------
+# CONFIG
+# -----------------------------
+OPENAI_EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
 openai.api_key = os.getenv("OPENAI_API_KEY")
 
 INDEX_NAME = "products"
-DB_BATCH = 200  # rows per chunk from DB
+DB_BATCH = 200          # rows per chunk from DB
+MAX_TEXT_CHARS = 4000   # truncate very long titles/desc
 
 
+# -----------------------------
+# DB CONNECTION
+# -----------------------------
 def get_db():
     return mysql.connector.connect(
         host=DB_HOST,
@@ -28,17 +35,134 @@ def get_db():
     )
 
 
+# -----------------------------
+# EMBEDDING HELPER (0.28.0 style)
+# -----------------------------
+def _sanitize_text(t):
+    """Convert anything to a safe, short string for embeddings."""
+    if t is None:
+        t = ""
+    try:
+        t = str(t)
+    except Exception:
+        t = ""
+
+    # remove weird control chars
+    t = re.sub(r"[^\x20-\x7E\n]", " ", t)
+    # collapse whitespace
+    t = re.sub(r"\s+", " ", t).strip()
+
+    # avoid truly empty strings – replace with a placeholder
+    if t == "":
+        t = "empty"
+
+    # hard length cap (very generous for titles)
+    return t[:2000]
+
 def embed_texts(texts):
-    """Return list of embedding vectors for list of strings."""
-    resp = openai.Embedding.create(
-        model=OPENAI_EMBED_MODEL,
-        input=[t if t is not None else "" for t in texts],
-    )
-    return [d["embedding"] for d in resp["data"]]
+    """Return list of embedding vectors for list of strings (with debug)."""
+    cleaned = [_sanitize_text(t) for t in texts]
+
+    # Optional: see first few items for sanity
+    print("Embedding batch sample (first 3):", [repr(c) for c in cleaned[:3]])
+
+    # ---- 1) Try batch mode ----
+    try:
+        resp = openai.Embedding.create(
+            model=OPENAI_EMBED_MODEL,
+            input=cleaned,     # list of strings
+        )
+        return [d["embedding"] for d in resp["data"]]
+
+    except InvalidRequestError as e:
+        # Batch failed – now we hunt the problematic entries.
+        print("⚠️ Batch failed → falling back to per-item embeddings.")
+        print("   Reason:", e)
+
+        vectors = []
+        for idx, text in enumerate(cleaned):
+            try:
+                r = openai.Embedding.create(
+                    model=OPENAI_EMBED_MODEL,
+                    input=[text],   # single string as 1-element list
+                )
+                vectors.append(r["data"][0]["embedding"])
+            except Exception as e2:
+                # Log *exactly* what blew up
+                print("❌ EMBEDDING FAILED at index", idx)
+                print("   TEXT repr:", repr(text))
+                print("   ERROR:", e2)
+
+                # As a last resort, use embedding of a safe placeholder
+                fallback = openai.Embedding.create(
+                    model=OPENAI_EMBED_MODEL,
+                    input=["fallback text"],
+                )
+                vectors.append(fallback["data"][0]["embedding"])
+
+        return vectors
 
 
+def embed_texts_old(texts):
+    """
+    Return list of embedding vectors for a list of strings.
+    Uses legacy openai==0.28.0 client.
+
+    - Truncates to MAX_TEXT_CHARS.
+    - If batch call fails, falls back to per-item calls and
+      replaces any failing item with an embedding of "".
+    """
+    cleaned = []
+    for t in texts:
+        if t is None:
+            t = ""
+        t = str(t)
+        if len(t) > MAX_TEXT_CHARS:
+            t = t[:MAX_TEXT_CHARS]
+        cleaned.append(t)
+
+    # 1) Try single batch call
+    try:
+        resp = openai.Embedding.create(
+            model=OPENAI_EMBED_MODEL,
+            input=cleaned,
+        )
+        return [d["embedding"] for d in resp["data"]]
+
+    except InvalidRequestError as e:
+        print("⚠️ Batch embedding failed with InvalidRequestError:", e)
+        print("   Falling back to per-item embeddings…")
+
+        vectors = []
+        # 2) Per-item fallback
+        for idx, t in enumerate(cleaned):
+            try:
+                r = openai.Embedding.create(
+                    model=OPENAI_EMBED_MODEL,
+                    input=[t],
+                )
+                vectors.append(r["data"][0]["embedding"])
+            except InvalidRequestError as e2:
+                # Log and use embedding of empty string as safe fallback
+                print(f"   ⚠️ Skipping/repairing item idx={idx} due to:", e2)
+                r = openai.Embedding.create(
+                    model=OPENAI_EMBED_MODEL,
+                    input=[""],
+                )
+                vectors.append(r["data"][0]["embedding"])
+        return vectors
+
+    except Exception as e:
+        # Any other unexpected error → re-raise so you see it
+        print("❌ Unexpected error calling OpenAI embeddings:", repr(e))
+        raise
+
+
+# -----------------------------
+# MAIN INDEXING LOOP
+# -----------------------------
 def main():
-    client = get_opensearch_client()
+    os_client = get_opensearch_client()
 
     try:
         conn = get_db()
@@ -51,8 +175,12 @@ def main():
         total = cur.fetchone()["cnt"]
         print("Total products:", total)
 
-        offset = 0
-        processed = 0
+        # allow resume via env var
+        start_offset = int(os.getenv("START_OFFSET", "0"))
+        offset = start_offset
+        processed = start_offset
+
+        print(f"🔁 Starting indexing from offset={offset}")
 
         while True:
             cur.execute(
@@ -88,7 +216,7 @@ def main():
                 doc = {
                     "product_id": row["product_id"],
                     "title": row["title"] or "",
-                    "description": "",  # placeholder; fill later if you have it
+                    "description": "",
                     "main_category": row["main_category"],
                     "price": float(row["price"]) if row["price"] is not None else None,
                     "embedding": emb,
@@ -97,28 +225,23 @@ def main():
                     {
                         "_op_type": "index",
                         "_index": INDEX_NAME,
-                        "_id": str(row["product_id"]),
+                        "_id": str(row["product_id"]),  # stable id → re-runs just overwrite
                         "_source": doc,
                     }
                 )
 
             print(f"📦 Indexing batch of {len(actions)} docs to OpenSearch...")
 
-            # Use bulk with retries & backoff to reduce 429 errors
             success, errors = bulk(
-                client,
+                os_client,
                 actions,
-                chunk_size=100,          # smaller chunks to reduce load on cluster
-                max_retries=5,           # retry failed items (incl. 429) up to 5 times
-                initial_backoff=2,       # 2s, 4s, 8s, 16s, 32s...
-                max_backoff=60,          # cap backoff
-                request_timeout=60,      # give cluster time to respond
-                raise_on_error=False,    # don't raise on per-item error
-                raise_on_exception=False # don't raise on exceptions inside helpers
+                chunk_size=100,
+                request_timeout=60,
+                raise_on_error=False,
+                raise_on_exception=False,
             )
 
             if errors:
-                # errors is a list of per-item error dicts
                 print(f"⚠️ {len(errors)} doc(s) had errors in this batch (showing up to 5):")
                 for err in errors[:5]:
                     print(err)
@@ -127,7 +250,6 @@ def main():
             offset += DB_BATCH
             print(f"✅ Indexed {processed}/{total} documents")
 
-            # Small pause between batches to be nicer to the cluster
             time.sleep(1)
 
         cur.close()
