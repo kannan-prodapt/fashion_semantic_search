@@ -59,6 +59,29 @@ def _sanitize_text(t):
     # hard length cap (very generous for titles)
     return t[:2000]
 
+def get_last_indexed_id(os_client):
+    """
+    Returns the highest product_id currently indexed in OpenSearch,
+    or 0 if the index is empty.
+    """
+    try:
+        resp = os_client.search(
+            index=INDEX_NAME,
+            body={
+                "size": 1,
+                "sort": [{"product_id": {"order": "desc"}}],
+                "_source": ["product_id"],
+                "query": {"match_all": {}}
+            }
+        )
+        hits = resp.get("hits", {}).get("hits", [])
+        if not hits:
+            return 0
+        return int(hits[0]["_source"]["product_id"])
+    except Exception as e:
+        print("⚠️ Could not fetch last indexed id from OpenSearch:", e)
+        return 0
+
 def embed_texts(texts):
     """Return list of embedding vectors for list of strings (with debug)."""
     cleaned = [_sanitize_text(t) for t in texts]
@@ -175,12 +198,11 @@ def main():
         total = cur.fetchone()["cnt"]
         print("Total products:", total)
 
-        # allow resume via env var
-        start_offset = int(os.getenv("START_OFFSET", "0"))
-        offset = start_offset
-        processed = start_offset
+        # get last indexed id from OpenSearch
+        last_id = get_last_indexed_id(os_client)
+        print(f"🔁 Resuming indexing from product_id > {last_id}")
 
-        print(f"🔁 Starting indexing from offset={offset}")
+        processed = 0
 
         while True:
             cur.execute(
@@ -191,10 +213,11 @@ def main():
                     main_category,
                     price
                 FROM products
+                WHERE id > %s
                 ORDER BY id
-                LIMIT %s OFFSET %s
+                LIMIT %s
                 """,
-                (DB_BATCH, offset),
+                (last_id, DB_BATCH),
             )
             rows = cur.fetchall()
             if not rows:
@@ -208,7 +231,7 @@ def main():
                 texts.append(combined)
                 meta.append(row)
 
-            print(f"🧠 Embedding {len(texts)} products (offset={offset})...")
+            print(f"🧠 Embedding {len(texts)} products (last_id={last_id})...")
             embeddings = embed_texts(texts)
 
             actions = []
@@ -225,7 +248,7 @@ def main():
                     {
                         "_op_type": "index",
                         "_index": INDEX_NAME,
-                        "_id": str(row["product_id"]),  # stable id → re-runs just overwrite
+                        "_id": str(row["product_id"]),
                         "_source": doc,
                     }
                 )
@@ -247,9 +270,9 @@ def main():
                     print(err)
 
             processed += len(rows)
-            offset += DB_BATCH
-            print(f"✅ Indexed {processed}/{total} documents")
+            last_id = rows[-1]["product_id"]  # advance to the last id in this batch
 
+            print(f"✅ Indexed {processed} new documents (up to id={last_id})")
             time.sleep(1)
 
         cur.close()

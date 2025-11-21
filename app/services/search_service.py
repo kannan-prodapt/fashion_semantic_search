@@ -1,6 +1,6 @@
 # app/services/search_service.py
 import os
-from typing import List, Dict, Any, Tuple
+from typing import List, Dict, Any, Tuple, Optional
 
 import openai
 from fastapi import HTTPException
@@ -11,6 +11,67 @@ from app.db.connection import get_db_connection
 from app.core.llm_filters import llm_filters_cached
 from app.core.sql_builder import build_sql_from_filters
 from app.opensearch_client import get_opensearch_client
+
+import json
+import time
+from collections import OrderedDict
+
+_RANK_CACHE: "OrderedDict[str, Tuple[float, List[int]]]" = OrderedDict()
+
+RANK_CACHE_TTL_SECONDS = 300  # 5 minutes
+RANK_CACHE_MAX_SIZE = 1024    # tune as needed
+
+
+
+def _make_rank_cache_key(filters: Dict[str, Any], sql_ids: List[int], query: str) -> str:
+    """
+    Create a deterministic, hashable cache key from filters, candidate IDs and query.
+    """
+    return json.dumps(
+        {
+            "filters": filters,       # must be JSON serializable
+            "sql_ids": sql_ids,       # preserves ordering of SQL candidates
+            "query": query.strip(),   # normalized query
+        },
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+
+
+def _rank_cache_get(key: str) -> Optional[List[int]]:
+    """
+    LRU + TTL get. Returns ranked_ids or None if not present / expired.
+    """
+    now = time.time()
+    item = _RANK_CACHE.get(key)
+    if not item:
+        return None
+
+    ts, ranked_ids = item
+    if now - ts > RANK_CACHE_TTL_SECONDS:
+        # expired
+        try:
+            del _RANK_CACHE[key]
+        except KeyError:
+            pass
+        return None
+
+    _RANK_CACHE.move_to_end(key)
+    return ranked_ids
+
+
+
+def _rank_cache_set(key: str, ranked_ids: List[int]) -> None:
+    """
+    LRU insert/update for ranked_ids.
+    """
+    now = time.time()
+    _RANK_CACHE[key] = (now, ranked_ids)
+    _RANK_CACHE.move_to_end(key)
+
+    if len(_RANK_CACHE) > RANK_CACHE_MAX_SIZE:
+        # pop oldest
+        _RANK_CACHE.popitem(last=False)
 
 OPENAI_EMBED_MODEL = os.getenv("OPENAI_EMBED_MODEL", "text-embedding-ada-002")
 SEARCH_API_KEY = os.getenv("SEARCH_API_KEY", "MYKEY")
@@ -254,11 +315,19 @@ def search_with_vector(req: SearchRequest) -> SearchResponse:
     if not sql_ids:
         return SearchResponse(filters=filters, results=[])
 
-    try:
-        os_client = get_opensearch_client()
-        query_vec = embed_query(req.query)
+    # --- Cache key based on filters + candidate ids + query ---
+    cache_key = _make_rank_cache_key(filters, sql_ids, req.query)
+    cached_ranked_ids = _rank_cache_get(cache_key)
 
-        body = {
+    if cached_ranked_ids is not None:
+        # Cache hit: bypass embedding + OpenSearch entirely
+        ranked_ids = cached_ranked_ids
+    else:
+        try:
+            os_client = get_opensearch_client()
+            query_vec = embed_query(req.query)
+
+            body = {
             "size": len(sql_ids),
             "query": {
                 "knn": {
@@ -273,28 +342,28 @@ def search_with_vector(req: SearchRequest) -> SearchResponse:
                     }
                 }
             }
-        }
+            }
 
-        es_resp = os_client.search(index="products", body=body)
-        hits = es_resp.get("hits", {}).get("hits", [])
+            es_resp = os_client.search(index="products", body=body)
+            hits = es_resp.get("hits", {}).get("hits", [])
 
-        ranked = []
-        for h in hits:
-            src = h.get("_source", {})
-            pid_val = src.get("product_id") or h.get("_id")
-            try:
-                pid = int(pid_val)
-            except (TypeError, ValueError):
-                continue
-            score = float(h.get("_score", 0.0))
-            ranked.append((pid, score))
+            ranked = []
+            for h in hits:
+                src = h.get("_source", {})
+                pid_val = src.get("product_id") or h.get("_id")
+                try:
+                    pid = int(pid_val)
+                except (TypeError, ValueError):
+                    continue
+                score = float(h.get("_score", 0.0))
+                ranked.append((pid, score))
 
-        if not ranked:
+            if not ranked:
+                ranked = [(pid, 1.0) for pid in sql_ids]
+
+        except Exception as e:
+            print("Vector search error, falling back to SQL ordering:", e)
             ranked = [(pid, 1.0) for pid in sql_ids]
-
-    except Exception as e:
-        print("Vector search error, falling back to SQL ordering:", e)
-        ranked = [(pid, 1.0) for pid in sql_ids]
 
     ranked_ids = [pid for pid, _ in ranked]
     results = hydrate_products_in_order(ranked_ids)

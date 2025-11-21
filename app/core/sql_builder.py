@@ -5,10 +5,11 @@ def build_sql_from_filters(filters: Dict[str, Any], limit: int):
     base_select = "SELECT DISTINCT p.id, p.title FROM products p"
     joins: List[str] = []
 
-    # We'll separate facet-positive clauses (OR-ed) from other WHERE clauses (AND-ed)
-    facet_clauses: List[str] = []
-    facet_params: List[Any] = []
+    # Positive label clauses (one per dimension, e.g. vibe, gender, etc.)
+    label_clauses: List[str] = []
+    label_params: List[Any] = []
 
+    # Other WHERE clauses (price, store, NOT IN filters, etc.)
     other_where_clauses: List[str] = []
     other_params: List[Any] = []
 
@@ -35,12 +36,13 @@ def build_sql_from_filters(filters: Dict[str, Any], limit: int):
             # backward compatibility with old schema that used `"vibe": [...]`, etc.
             values_in = filters[dim]
 
-        # Positive facet filters → contribute to a single OR block across dimensions
+        # Positive label filters → AND across dimensions (intersection semantics)
         if isinstance(values_in, list) and values_in:
             joins.append(f"LEFT JOIN {table} {alias} ON {alias}.product_id = p.id")
             placeholders = ", ".join(["%s"] * len(values_in))
-            facet_clauses.append(f"{alias}.label IN ({placeholders})")
-            facet_params.extend(values_in)
+            # one clause per dimension, e.g. "pv.label IN (%s,%s,...)"
+            label_clauses.append(f"{alias}.label IN ({placeholders})")
+            label_params.extend(values_in)
 
         # NOT IN values → still hard constraints via NOT EXISTS (AND-ed)
         values_not_in = filters.get(not_in_key)
@@ -129,10 +131,11 @@ def build_sql_from_filters(filters: Dict[str, Any], limit: int):
     where_clauses: List[str] = []
     params: List[Any] = []
 
-    # 1) Facet-positive OR block (if any)
-    if facet_clauses:
-        where_clauses.append("(" + " OR ".join(facet_clauses) + ")")
-        params.extend(facet_params)
+    # 1) Positive label filters (AND across dimensions)
+    if label_clauses:
+        # we could wrap with parentheses, but it's optional for AND
+        where_clauses.extend(label_clauses)
+        params.extend(label_params)
 
     # 2) All other constraints (AND-ed)
     if other_where_clauses:

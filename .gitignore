@@ -9,6 +9,10 @@ __pycache__/
 # SQL Files
 *.sql
 
+# service sh files
+*.pid
+
+
 # Distribution / packaging
 .Python
 build/
