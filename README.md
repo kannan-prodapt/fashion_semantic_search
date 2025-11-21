@@ -271,11 +271,9 @@ Set up environment variables:
 ```bash
 export OPENAI_API_KEY="..."
 export SEARCH_KEY="..."
-export DB_HOST="..."
-export DB_USER="..."
-export DB_PASSWORD="..."
-export OS_HOST="..."
 ```
+
+You might currently have to add DB Configuration in db_config.py file where it is imported from
 
 ---
 
