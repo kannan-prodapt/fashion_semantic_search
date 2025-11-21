@@ -47,21 +47,52 @@ This creates embeddings and indexes them for vector-based ranking.
 
 ---
 
-### **3. Run the Streamlit UI**
+### ▶️ Start all services:
 
 ```bash
-streamlit run app/ui/amazon_ui.py
+./server.sh start
 ```
 
-Your local UI will open at:
+This launches:
 
-```
-http://localhost:8501
+* **FastAPI backend** (port 8000)
+* **Streamlit UI** (port 8501)
+
+Logs are usually written to `logs/`.
+
+### ⏹ Stop all services:
+
+```bash
+./server.sh stop
 ```
 
-If running on EC2, bind `--server.port` and `--server.address`.
+This gracefully kills:
+
+* Uvicorn (FastAPI)
+* Streamlit frontend
+
+Your entire application stack can now be managed with two commands.
 
 ---
+
+# 4️⃣ Run Manually (Optional)
+
+If you prefer manual control:
+
+### Start backend:
+
+```bash
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+### Start Streamlit:
+
+```bash
+streamlit run app/ui/amazon_ui.py --server.port=8501
+```
+
+---
+
 
 ### **4. Your system is ready!**
 
