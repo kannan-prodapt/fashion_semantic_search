@@ -1,0 +1,56 @@
+# Main API + framework
+fastapi
+uvicorn
+
+# Database
+mysql-connector-python
+
+# LLM and OpenAI
+openai
+
+# AWS + OpenSearch
+opensearch-py
+boto3
+requests-aws4auth
+
+# Data handling (CSV preview, etc.)
+pandas
+
+# REST/HTTP utilities (used by OpenSearch client)
+requests
+
+# For type hints and advanced typing (Python 3.8+)
+typing-extensions
+
+# Testing (if running or developing tests)
+pytest
+
+# If you use dotenv for loading API keys in local/dev
+python-dotenv
+
+# For working with JSON, etc. (generally comes with Python, but include if code uses)
+# json is built-in, NOT required here
+
+# Any additional libraries you may use in future:
+# tqdm
+# pyyaml
+
+# Minimum Python version
+# (optional, depends on your environment)
+# python >=3.8
+
+# ----
+# Required environment variables (document for user)
+# OPENAI_API_KEY
+# SEARCH_API_KEY
+# MySQL config via app/db/db_config.py
+
+# ----
+# If using code in scripts/ (like reset_schema, OpenSearch indexers), make sure the following are installed.
+# opensearch-py
+# boto3
+# requests-aws4auth
+
+# Notes:
+# - This requirements.txt is produced by inspecting all LLM, SQL, OpenSearch, and helper code in the repo.
+# - Update the file as you add/remove 3rd-party libraries in your project.
