@@ -105,6 +105,7 @@ Sample search request:
 
 See `tests/test_tables_created_successfully.py` for verification logic.
 
+Alternatively, You can load the sql dump provided under the data folder.
 ---
 
 ## Indexing & OpenSearch
