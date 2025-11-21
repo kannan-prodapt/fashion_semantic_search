@@ -1,6 +1,10 @@
 # Fashion Semantic Search
 
-LLM-powered semantic search for fashion products. Converts natural-language queries into structured SQL filters with IN/NOT IN support for vibes, occasions, categories, styles, price, and ratings. Includes SQL builder, caching, and a configurable fashion taxonomy.
+LLM-powered semantic search for fashion products. Converts natural-language queries into structured SQL filters with IN/NOT IN support for vibes, occasions, categories, styles, price, and ratings. [...]
+
+## 🚀 Demo
+
+Try it live: [Fashion Semantic Search Demo](http://ec2-13-234-76-80.ap-south-1.compute.amazonaws.com:8501/)
 
 ---
 
@@ -21,7 +25,7 @@ LLM-powered semantic search for fashion products. Converts natural-language quer
 
 ## Overview
 
-This repository provides a semantic search engine for fashion products. It leverages large language models (LLMs) to interpret free-form natural language queries and converts them into highly specific SQL queries for efficient product retrieval. It supports semantic and vector search using OpenSearch, caching, and extensible fashion taxonomies.
+This repository provides a semantic search engine for fashion products. It leverages large language models (LLMs) to interpret free-form natural language queries and converts them into highly spec[...]
 
 ---
 
@@ -40,7 +44,7 @@ This repository provides a semantic search engine for fashion products. It lever
 
 # Fashion Semantic Search
 
-LLM-powered semantic search for fashion products with SQL filter generation and vector-based ranking. Converts natural-language queries into structured SQL filters that support advanced operations like IN/NOT IN (for vibes, occasions, categories, etc.), and ranks results using vector similarity. Also includes a fashionable taxonomy, caching for speed, and now features a Streamlit web app interface for seamless prototyping.
+LLM-powered semantic search for fashion products with SQL filter generation and vector-based ranking. Converts natural-language queries into structured SQL filters that support advanced operations[...]  
 
 ---
 
@@ -91,7 +95,7 @@ streamlit run amazon_ui.py
 ### Two Interactive Endpoints
 
 - **`/v1/search`**  
-  Performs a *hybrid search*: the system applies SQL-based filtering for hard constraints (including negations, structured, and categorical facets), and then reranks the filtered results using vector similarity for semantic matching.  
+  Performs a *hybrid search*: the system applies SQL-based filtering for hard constraints (including negations, structured, and categorical facets), and then reranks the filtered results using vec[...]  
   *Recommended for most production uses as it provides both accuracy and semantic relevance.*
 
 - **`/v1/search_sql`**  
@@ -148,7 +152,7 @@ print(response.json())
   This layered approach produces more reliable results, especially in edge-cases where pure vector search may “miss” critical exclusions or inclusions.
 
 - **Endpoint Choices:**  
-  `/v1/search_sql` offers the fastest runtime, suitable for applications that need an instant response or just structured retrieval, while `/v1/search` (hybrid) offers higher quality ranking at some computational cost.
+  `/v1/search_sql` offers the fastest runtime, suitable for applications that need an instant response or just structured retrieval, while `/v1/search` (hybrid) offers higher quality ranking at s[...]
 
 ### Streamlit for Interactive Prototyping
 
